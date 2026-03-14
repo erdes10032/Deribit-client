@@ -1,7 +1,15 @@
+import pathlib
+import sys
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
+# Гарантируем, что корень проекта (в Docker это /app) есть в sys.path
+ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from app.main import app
 from app.db.models import Base, Price
@@ -11,7 +19,9 @@ import app.api.routes as routes
 
 TEST_DATABASE_URL = "sqlite:///./test_api.db"
 
-engine = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})
+engine = create_engine(
+    TEST_DATABASE_URL, connect_args={"check_same_thread": False}
+)
 TestingSessionLocal = sessionmaker(
     autocommit=False, autoflush=False, bind=engine
 )

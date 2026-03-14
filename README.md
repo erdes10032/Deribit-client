@@ -208,7 +208,7 @@ uvicorn app.main:app --reload
 celery -A app.tasks.celery_tasks.celery worker --loglevel=info
 ```
 
-**8.Запустить Celery beat**
+**8. Запустить Celery beat**
 
 ```bash
 celery -A app.tasks.celery_tasks.celery beat --loglevel=info

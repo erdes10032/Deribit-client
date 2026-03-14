@@ -205,13 +205,13 @@ uvicorn app.main:app --reload
 **7. Запустить Celery worker**
 
 ```bash
-celery -A app.tasks.celery_tasks.celery worker --loglevel=info
+celery -A app.tasks.celery_tasks worker --pool=solo --loglevel=info
 ```
 
 **8. Запустить Celery beat**
 
 ```bash
-celery -A app.tasks.celery_tasks.celery beat --loglevel=info
+celery -A app.tasks.celery_tasks beat --loglevel=info  
 ```
 
 ### Способ 2: Docker-установка

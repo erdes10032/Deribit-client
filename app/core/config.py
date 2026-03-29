@@ -9,10 +9,8 @@ class Settings:
     IN_DOCKER = os.environ.get('IN_DOCKER') == 'true' or os.path.exists('/.dockerenv')
     if IN_DOCKER:
         POSTGRES_HOST = 'db'
-        print("Docker environment detected. Using PostgreSQL host: db")
     else:
         POSTGRES_HOST = os.getenv('POSTGRES_HOST')
-        print(f"Local environment detected. Using PostgreSQL host: {POSTGRES_HOST}")
 
     REDIS_HOST: str = os.getenv("REDIS_HOST")
     REDIS_PORT: int = int(os.getenv("REDIS_PORT"))
@@ -24,6 +22,11 @@ class Settings:
     POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD")
     POSTGRES_HOST: str = POSTGRES_HOST
     POSTGRES_PORT: str = os.getenv("POSTGRES_PORT")
+
+    TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN")
+    TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID")
+
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY")
 
     @property
     def redis_url(self) -> str:

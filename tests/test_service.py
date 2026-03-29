@@ -4,12 +4,13 @@ import sys
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-# Гарантируем, что корень проекта (в Docker это /app) есть в sys.path
+# Гарантируем, что корень проекта есть в sys.path
 ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from app.db.models import Base, Price
+from app.core.tickers import SUPPORTED_TICKERS
 import app.db.database as db
 import app.tasks.celery_tasks as tasks
 
@@ -41,9 +42,8 @@ class FakeDeribitClient:
         return 0.0
 
 
-def test_fetch_prices_creates_two_price_rows(monkeypatch):
-    # Подменяем реальный DeribitClient,
-    # чтобы не ходить во внешний API
+def test_fetch_prices_creates_rows_for_all_supported_tickers(monkeypatch):
+    # Подменяем реальный DeribitClient, чтобы не ходить во внешний API
     monkeypatch.setattr(tasks, "DeribitClient", FakeDeribitClient)
 
     Base.metadata.drop_all(bind=engine)
@@ -55,12 +55,11 @@ def test_fetch_prices_creates_two_price_rows(monkeypatch):
     session = TestingSessionLocal()
     try:
         rows = session.query(Price).order_by(Price.ticker).all()
-        assert len(rows) == 2
+        assert len(rows) == len(SUPPORTED_TICKERS)
 
-        assert rows[0].ticker == "btc_usd"
-        assert rows[0].price == 100.0
+        by_ticker = {row.ticker: row for row in rows}
 
-        assert rows[1].ticker == "eth_usd"
-        assert rows[1].price == 200.0
+        assert by_ticker["btc_usd"].price == 100.0
+        assert by_ticker["eth_usd"].price == 200.0
     finally:
         session.close()

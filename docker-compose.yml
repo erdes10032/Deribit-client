@@ -24,8 +24,12 @@ services:
 
   app:
     build: .
+    env_file:
+      - .env
     ports:
       - "8000:8000"
+    volumes:
+      - charts_data:/app/charts
 
     depends_on:
       db:
@@ -52,6 +56,10 @@ services:
 
   worker:
     build: .
+    env_file:
+      - .env
+    volumes:
+      - charts_data:/app/charts
 
     depends_on:
       db:
@@ -74,6 +82,8 @@ services:
 
   beat:
     build: .
+    env_file:
+      - .env
 
     depends_on:
       db:
@@ -92,7 +102,31 @@ services:
       REDIS_USERNAME: ""
       REDIS_PASSWORD: ""
 
-    command: celery -A app.tasks.celery_tasks.celery beat --loglevel=info
+    command: celery -A app.tasks.celery_tasks.celery beat --loglevel=info --schedule /tmp/celerybeat-schedule
+
+  bot:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - charts_data:/app/charts
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      POSTGRES_DB: Deribit-client
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_PORT: 5432
+
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_USERNAME: ""
+      REDIS_PASSWORD: ""
+    command: python -m app.tasks.telegram_bot
 
 volumes:
   postgres_data:
+  charts_data:

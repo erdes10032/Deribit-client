@@ -216,20 +216,37 @@ async def handle_message(message):
 
 
 async def run_bot():
+    if not BOT_TOKEN:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is empty")
+
+    print("[BOT] Telegram bot polling started")
     offset = 0
 
     async with aiohttp.ClientSession() as session:
         while True:
             url = f"{BASE_URL}/getUpdates?timeout=10&offset={offset}"
 
-            async with session.get(url) as resp:
-                data = await resp.json()
+            try:
+                async with session.get(url) as resp:
+                    data = await resp.json()
+            except Exception as e:
+                print(f"[BOT][ERROR] getUpdates failed: {e}")
+                await asyncio.sleep(2)
+                continue
+
+            if not data.get("ok", False):
+                print(f"[BOT][ERROR] Telegram API error: {data}")
+                await asyncio.sleep(2)
+                continue
 
             for update in data["result"]:
                 offset = update["update_id"] + 1
 
                 if "message" in update:
-                    await handle_message(update["message"])
+                    try:
+                        await handle_message(update["message"])
+                    except Exception as e:
+                        print(f"[BOT][ERROR] handle_message failed: {e}")
 
 
 if __name__ == "__main__":

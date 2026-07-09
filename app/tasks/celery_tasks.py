@@ -1,5 +1,6 @@
 import asyncio
 import time
+from collections import defaultdict
 
 import aiohttp
 from celery import Celery
@@ -9,6 +10,7 @@ from app.db.database import SessionLocal
 from app.db.models import NotificationSubscription, Price
 from app.core.config import settings
 from app.core.tickers import SUPPORTED_TICKERS
+from app.core.chart_intervals import DEFAULT_INTERVAL_SECONDS, format_interval
 from app.agents.market_agent import MarketAgent
 from app.services.chart_service import ChartService
 from app.services.telegram_service import TelegramService
@@ -26,9 +28,9 @@ celery.conf.beat_schedule = {
         "task": "app.tasks.celery_tasks.fetch_prices",
         "schedule": 60.0,
     },
-    "build-charts-every-10-minutes": {
+    "build-charts-every-minute": {
         "task": "app.tasks.celery_tasks.build_charts",
-        "schedule": 600.0,
+        "schedule": 60.0,
     },
     "notify-strong-changes-every-minute": {
         "task": "app.tasks.celery_tasks.notify_strong_changes",
@@ -77,18 +79,26 @@ def fetch_prices():
 
 @celery.task(name="app.tasks.celery_tasks.build_charts")
 def build_charts():
-    WINDOW_SECONDS = 600
-
     async def run():
+        now = int(time.time())
         db_session = SessionLocal()
         chart_service = ChartService()
         telegram = TelegramService()
 
         try:
-            window_end_ts = int(time.time())
-            window_start_ts = window_end_ts - WINDOW_SECONDS
+            subscriptions = db_session.query(NotificationSubscription).all()
+            due_groups: dict[tuple[str, int], list[NotificationSubscription]] = defaultdict(list)
 
-            for ticker in SUPPORTED_TICKERS:
+            for subscription in subscriptions:
+                interval = subscription.chart_interval_seconds or DEFAULT_INTERVAL_SECONDS
+                last_sent = subscription.last_chart_sent_at
+                if last_sent is None or (now - last_sent) >= interval:
+                    due_groups[(subscription.ticker, interval)].append(subscription)
+
+            for (ticker, interval), subscribers in due_groups.items():
+                window_end_ts = now
+                window_start_ts = window_end_ts - interval
+
                 prices = (
                     db_session.query(Price)
                     .filter(
@@ -101,7 +111,7 @@ def build_charts():
                 )
 
                 if len(prices) < 2:
-                    print(f"[INFO] Not enough data for {ticker}")
+                    print(f"[INFO] Not enough data for {ticker} ({format_interval(interval)})")
                     continue
 
                 chart_path = chart_service.build_window_chart(
@@ -111,21 +121,21 @@ def build_charts():
                     window_end_ts=window_end_ts,
                 )
 
-                if chart_path:
-                    print(f"[INFO] Chart built: {chart_path}")
-                    subscribers_raw = (
-                        db_session.query(NotificationSubscription.telegram_user_id)
-                        .filter(NotificationSubscription.ticker == ticker)
-                        .all()
-                    )
-                    subscribers = [u[0] for u in subscribers_raw]
+                if not chart_path:
+                    continue
 
-                    for telegram_user_id in subscribers:
-                        await telegram.send_photo(
-                            telegram_user_id,
-                            chart_path,
-                            caption=f"{ticker} chart",
-                        )
+                print(f"[INFO] Chart built: {chart_path}")
+                interval_label = format_interval(interval)
+
+                for subscription in subscribers:
+                    await telegram.send_photo(
+                        subscription.telegram_user_id,
+                        chart_path,
+                        caption=f"{ticker} chart ({interval_label})",
+                    )
+                    subscription.last_chart_sent_at = now
+
+                db_session.commit()
 
         finally:
             db_session.close()

@@ -11,6 +11,98 @@ import os
 
 router = APIRouter()
 
+PAGE_STYLE = """
+<style>
+    * { box-sizing: border-box; }
+    body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #f4f6f8;
+        color: #1f2937;
+        line-height: 1.5;
+    }
+    .page {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 24px 16px 48px;
+    }
+    h1 {
+        margin: 0 0 8px;
+        font-size: 1.75rem;
+        color: #111827;
+    }
+    .subtitle {
+        margin: 0 0 24px;
+        color: #6b7280;
+    }
+    section {
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 16px 18px;
+        margin-bottom: 16px;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    }
+    h2 {
+        margin: 0 0 12px;
+        font-size: 1.1rem;
+        color: #374151;
+    }
+    label { margin-right: 8px; color: #4b5563; }
+    select, input[type="number"] {
+        padding: 6px 10px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        background: #fff;
+        margin: 4px 8px 4px 0;
+    }
+    button {
+        padding: 7px 14px;
+        border: none;
+        border-radius: 6px;
+        background: #2563eb;
+        color: #fff;
+        cursor: pointer;
+        margin-top: 4px;
+    }
+    button:hover { background: #1d4ed8; }
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 8px;
+    }
+    th, td {
+        border: 1px solid #e5e7eb;
+        padding: 8px 10px;
+        text-align: left;
+    }
+    th {
+        background: #f9fafb;
+        font-weight: 600;
+    }
+    tr:nth-child(even) td { background: #fafafa; }
+    #chartImage {
+        max-width: 100%;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        margin-top: 8px;
+    }
+    #predictionResult {
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 12px;
+        min-height: 48px;
+        white-space: pre-wrap;
+    }
+    iframe {
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        background: #fff;
+    }
+</style>
+"""
+
 
 @router.get("/", response_class=HTMLResponse)
 def index():
@@ -23,14 +115,16 @@ def index():
     <html lang="ru">
     <head>
         <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Deribit Prices</title>
+        __PAGE_STYLE__
     </head>
     <body>
-        <center>
+        <div class="page">
         <h1>Deribit Price Viewer</h1>
+        <p class="subtitle">Мониторинг цен, графики и AI-прогнозы</p>
 
-        <p>Работа с API</p>
-
+        <section>
         <h2>История цен</h2>
         <form method="get" action="/ui/prices" target="result">
             <label>Ticker:</label>
@@ -39,7 +133,9 @@ def index():
             </select>
             <button type="submit">Показать</button>
         </form>
+        </section>
 
+        <section>
         <h2>Последняя цена</h2>
         <form method="get" action="/ui/price/latest" target="result">
             <label>Ticker:</label>
@@ -48,7 +144,9 @@ def index():
             </select>
             <button type="submit">Показать</button>
         </form>
+        </section>
 
+        <section>
         <h2>Цена по диапазону времени</h2>
         <form method="get" action="/ui/price/by-date" target="result">
             <label>Ticker:</label>
@@ -64,7 +162,9 @@ def index():
 
             <button type="submit">Показать</button>
         </form>
+        </section>
 
+        <section>
         <h2>Графики</h2>
 
         <select id="chartSelect">
@@ -78,7 +178,9 @@ def index():
         <br><br>
 
         <img id="chartImage" width="800"/>
+        </section>
 
+        <section>
         <h2>Прогноз ИИ</h2>
         <label>Тикер:</label>
         <select id="forecastSelect">
@@ -87,9 +189,11 @@ def index():
         <button type="button" onclick="loadPrediction()">прогноз</button>
         <br><br>
         <pre id="predictionResult"></pre>
+        </section>
 
+        <section>
         <h2>Последние цены</h2>
-        <table border="1" style="border-collapse:collapse;">
+        <table>
             <thead>
                 <tr>
                     <th>ticker</th>
@@ -99,9 +203,12 @@ def index():
             </thead>
             <tbody id="latestPricesBody"></tbody>
         </table>
+        </section>
 
+        <section>
         <h2>Результат</h2>
         <iframe name="result" width="100%" height="400"></iframe>
+        </section>
 
         <script>
         async function loadCharts() {
@@ -176,13 +283,15 @@ def index():
         loadLatestPrices();
         </script>
 
-        </center>
+        </div>
     </body>
     </html>
     """
 
     return (
-        html.replace("__TICKERS_OPTIONS__", tickers_options).replace("__TICKERS_JS__", tickers_js)
+        html.replace("__TICKERS_OPTIONS__", tickers_options)
+        .replace("__TICKERS_JS__", tickers_js)
+        .replace("__PAGE_STYLE__", PAGE_STYLE)
     )
 
 
@@ -292,9 +401,13 @@ def ui_price_by_date(
 def table_html(rows: str) -> str:
     return f"""
     <html>
+    <head>
+        <meta charset="utf-8">
+        {PAGE_STYLE}
+    </head>
     <body>
-        <center>
-            <table border="1">
+        <div class="page">
+            <table>
                 <tr>
                     <th>id</th>
                     <th>ticker</th>
@@ -303,7 +416,7 @@ def table_html(rows: str) -> str:
                 </tr>
                 {rows}
             </table>
-        </center>
+        </div>
     </body>
     </html>
     """

@@ -22,3 +22,5 @@ class NotificationSubscription(Base):
     id = Column(Integer, primary_key=True)
     telegram_user_id = Column(BigInteger, index=True)
     ticker = Column(String, index=True)
+    chart_interval_seconds = Column(Integer, nullable=False, default=600)
+    last_chart_sent_at = Column(BigInteger, nullable=True)

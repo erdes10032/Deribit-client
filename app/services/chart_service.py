@@ -4,6 +4,7 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
+from app.core.chart_intervals import format_interval
 from app.db.models import Price
 
 
@@ -90,7 +91,7 @@ class ChartService:
             ticker=ticker,
             prices=prices,
             filename=filename,
-            title=f"{ticker} price chart (last 10 minutes)",
+            title=f"{ticker} price chart (last {format_interval(window_end_ts - window_start_ts)})",
             x_start_ts=window_start_ts,
             x_end_ts=window_end_ts,
         )

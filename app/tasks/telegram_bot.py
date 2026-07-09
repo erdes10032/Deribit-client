@@ -1,8 +1,17 @@
 import asyncio
+import time
+
 import aiohttp
 
 from app.agents.market_agent import MarketAgent
 from app.core.config import settings
+from app.core.chart_intervals import (
+    ALLOWED_INTERVALS_MINUTES,
+    DEFAULT_INTERVAL_SECONDS,
+    format_interval,
+    is_valid_interval_minutes,
+    minutes_to_seconds,
+)
 from app.core.tickers import SUPPORTED_TICKERS
 from app.db.database import SessionLocal
 from app.db.models import NotificationSubscription, Price
@@ -14,6 +23,17 @@ from app.services.telegram_service import TelegramService
 BOT_TOKEN = settings.TELEGRAM_BOT_TOKEN
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
+HELP_TEXT = (
+    "Доступные команды:\n"
+    "/subscribe <тикер> [минуты] - подписаться на валюту (5/10/15/30/60)\n"
+    "/tickers - все доступные тикеры\n"
+    "/full_graph <тикер> - построить полный график\n"
+    "/subscriptions - все подписки на валюты\n"
+    "/chart_interval [тикер] <минуты> - периодичность графиков (5/10/15/30/60)\n"
+    "/prediction <тикер> - AI анализ цен\n"
+    "/help — помощь"
+)
+
 
 def _extract_telegram_user_id(message: dict) -> int | None:
     from_ = message.get("from") or {}
@@ -23,6 +43,11 @@ def _extract_telegram_user_id(message: dict) -> int | None:
 
 def _normalize_ticker(ticker: str) -> str:
     return ticker.strip().lower()
+
+
+def _format_subscription(subscription: NotificationSubscription) -> str:
+    interval = subscription.chart_interval_seconds or DEFAULT_INTERVAL_SECONDS
+    return f"{subscription.ticker} (графики каждые {format_interval(interval)})"
 
 
 async def handle_message(message):
@@ -40,31 +65,9 @@ async def handle_message(message):
 
     tg = TelegramService()
 
-    if command == "/start":
-        await tg.send_message(
-            telegram_user_id,
-            "Привет! Я бот для уведомлений по криптовалютам.\n\n"
-            "Команды:\n"
-            "Доступные команды:\n"
-            "/subscribe <тикер> - подписаться на валюту\n"
-            "/tickers - все доступные тикеры\n "
-            "/full_graph <тикер> - построить полный график\n"
-            "/subscriptions - все подписки на валюты"
-            "/prediction - AI анализ цен"
-            "/help — помощь",
-        )
-        return
-
-    if command == "/help":
-        await tg.send_message(
-            telegram_user_id,
-            "Доступные команды:\n"
-            "/subscribe <тикер> - подписаться на валюту\n"
-            "/tickers - все доступные тикеры\n "
-            "/full_graph <тикер> - построить полный график\n"
-            "/subscriptions - все подписки на валюты"
-            "/prediction - AI анализ цен",
-        )
+    if command in ("/start", "/help"):
+        greeting = "Привет! Я бот для уведомлений по криптовалютам.\n\n" if command == "/start" else ""
+        await tg.send_message(telegram_user_id, greeting + HELP_TEXT)
         return
 
     if command == "/tickers":
@@ -77,30 +80,172 @@ async def handle_message(message):
     if command == "/subscriptions":
         db = SessionLocal()
         try:
-            tickers = (
-                db.query(NotificationSubscription.ticker)
+            subscriptions = (
+                db.query(NotificationSubscription)
                 .filter(NotificationSubscription.telegram_user_id == telegram_user_id)
+                .order_by(NotificationSubscription.ticker.asc())
                 .all()
             )
-            subscribed = sorted({t[0] for t in tickers})
         finally:
             db.close()
 
-        if not subscribed:
+        if not subscriptions:
             await tg.send_message(telegram_user_id, "Пока вы ни на какие тикеры не подписаны.")
         else:
-            await tg.send_message(telegram_user_id, "Ваши подписки: " + ", ".join(subscribed))
+            lines = "\n".join(f"• {_format_subscription(sub)}" for sub in subscriptions)
+            await tg.send_message(telegram_user_id, "Ваши подписки:\n" + lines)
+        return
+
+    if command == "/chart_interval":
+        allowed = ", ".join(str(m) for m in ALLOWED_INTERVALS_MINUTES)
+
+        if len(parts) == 1:
+            db = SessionLocal()
+            try:
+                subscriptions = (
+                    db.query(NotificationSubscription)
+                    .filter(NotificationSubscription.telegram_user_id == telegram_user_id)
+                    .order_by(NotificationSubscription.ticker.asc())
+                    .all()
+                )
+            finally:
+                db.close()
+
+            if not subscriptions:
+                await tg.send_message(
+                    telegram_user_id,
+                    f"Сначала подпишитесь на тикер: /subscribe eth_usd\n"
+                    f"Доступные интервалы (мин): {allowed}",
+                )
+                return
+
+            lines = "\n".join(f"• {_format_subscription(sub)}" for sub in subscriptions)
+            await tg.send_message(
+                telegram_user_id,
+                "Текущая периодичность графиков:\n" + lines + f"\n\nДоступные интервалы (мин): {allowed}",
+            )
+            return
+
+        if len(parts) == 2:
+            try:
+                minutes = int(parts[1])
+            except ValueError:
+                await tg.send_message(
+                    telegram_user_id,
+                    f"Укажите минуты: /chart_interval 10\nДоступные интервалы: {allowed}",
+                )
+                return
+
+            if not is_valid_interval_minutes(minutes):
+                await tg.send_message(
+                    telegram_user_id,
+                    f"Недопустимый интервал. Доступные значения (мин): {allowed}",
+                )
+                return
+
+            interval_seconds = minutes_to_seconds(minutes)
+            db = SessionLocal()
+            try:
+                subscriptions = (
+                    db.query(NotificationSubscription)
+                    .filter(NotificationSubscription.telegram_user_id == telegram_user_id)
+                    .all()
+                )
+                if not subscriptions:
+                    await tg.send_message(telegram_user_id, "Сначала подпишитесь на тикер: /subscribe eth_usd")
+                    return
+
+                for subscription in subscriptions:
+                    subscription.chart_interval_seconds = interval_seconds
+                    subscription.last_chart_sent_at = int(time.time())
+                db.commit()
+            finally:
+                db.close()
+
+            await tg.send_message(
+                telegram_user_id,
+                f"Периодичность графиков для всех подписок: каждые {minutes} мин.",
+            )
+            return
+
+        ticker = _normalize_ticker(parts[1])
+        if ticker not in SUPPORTED_TICKERS:
+            await tg.send_message(telegram_user_id, "Неверный тикер")
+            return
+
+        try:
+            minutes = int(parts[2])
+        except (IndexError, ValueError):
+            await tg.send_message(
+                telegram_user_id,
+                f"Укажите минуты: /chart_interval {ticker} 15\nДоступные интервалы: {allowed}",
+            )
+            return
+
+        if not is_valid_interval_minutes(minutes):
+            await tg.send_message(
+                telegram_user_id,
+                f"Недопустимый интервал. Доступные значения (мин): {allowed}",
+            )
+            return
+
+        interval_seconds = minutes_to_seconds(minutes)
+        db = SessionLocal()
+        try:
+            subscription = (
+                db.query(NotificationSubscription)
+                .filter(
+                    NotificationSubscription.telegram_user_id == telegram_user_id,
+                    NotificationSubscription.ticker == ticker,
+                )
+                .first()
+            )
+            if not subscription:
+                await tg.send_message(telegram_user_id, f"Вы не подписаны на {ticker}. Используйте /subscribe {ticker}")
+                return
+
+            subscription.chart_interval_seconds = interval_seconds
+            subscription.last_chart_sent_at = int(time.time())
+            db.commit()
+        finally:
+            db.close()
+
+        await tg.send_message(
+            telegram_user_id,
+            f"Периодичность графиков для {ticker}: каждые {minutes} мин.",
+        )
         return
 
     if command == "/subscribe":
         if not arg:
-            await tg.send_message(telegram_user_id, "Укажите тикер: /subscribe eth_usd")
+            await tg.send_message(telegram_user_id, "Укажите тикер: /subscribe eth_usd [15]")
             return
 
         ticker = _normalize_ticker(arg)
         if ticker not in SUPPORTED_TICKERS:
             await tg.send_message(telegram_user_id, "Неверный тикер")
             return
+
+        interval_seconds = DEFAULT_INTERVAL_SECONDS
+        if len(parts) >= 3:
+            allowed = ", ".join(str(m) for m in ALLOWED_INTERVALS_MINUTES)
+            try:
+                minutes = int(parts[2])
+            except ValueError:
+                await tg.send_message(
+                    telegram_user_id,
+                    f"Укажите минуты числом. Доступные интервалы: {allowed}",
+                )
+                return
+
+            if not is_valid_interval_minutes(minutes):
+                await tg.send_message(
+                    telegram_user_id,
+                    f"Недопустимый интервал. Доступные значения (мин): {allowed}",
+                )
+                return
+
+            interval_seconds = minutes_to_seconds(minutes)
 
         db = SessionLocal()
         try:
@@ -123,15 +268,20 @@ async def handle_message(message):
                 NotificationSubscription(
                     telegram_user_id=telegram_user_id,
                     ticker=ticker,
+                    chart_interval_seconds=interval_seconds,
+                    last_chart_sent_at=int(time.time()),
                 )
             )
             db.commit()
         finally:
             db.close()
 
-        await tg.send_message(telegram_user_id, f"Оповещения для {ticker} включены.")
+        await tg.send_message(
+            telegram_user_id,
+            f"Оповещения для {ticker} включены. Графики каждые {format_interval(interval_seconds)}. "
+            f"Изменить: /chart_interval {ticker} {interval_seconds // 60}",
+        )
 
-        # Если прямо сейчас есть сильное изменение — отправим один раз сразу.
         prices = []
         db = SessionLocal()
         try:
